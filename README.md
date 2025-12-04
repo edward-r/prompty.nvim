@@ -12,9 +12,10 @@ iterate on prompts without leaving the editor.
 ## Installation
 
 ### lazy.nvim
+
 ```lua
 {
-  "yourname/prompty.nvim",
+  "edward-r/prompty.nvim",
   cmd = { "Prompty", "PromptyVisual", "PromptyRefine" },
   keys = {
     { "<leader>pp", ":Prompty<CR>", mode = "n", desc = "Prompty" },
@@ -29,9 +30,10 @@ iterate on prompts without leaving the editor.
 ```
 
 ### packer.nvim
+
 ```lua
 use({
-  "yourname/prompty.nvim",
+  "edward-r/prompty.nvim",
   config = function()
     require("prompty").setup()
   end,
@@ -39,10 +41,12 @@ use({
 ```
 
 ### Manual / plain runtimepath
+
 ```bash
 cd ~/.config/nvim/pack/plugins/start
-git clone https://github.com/yourname/prompty.nvim.git
+git clone https://github.com/edward-r/prompty.nvim.git
 ```
+
 Then add `require("prompty").setup()` in your `init.lua`.
 
 ---
@@ -52,17 +56,20 @@ Then add `require("prompty").setup()` in your `init.lua`.
 ```vim
 :Prompty Write a structured bug report template
 ```
+
 - Streams Markdown into the "Prompty Output" buffer.
 - Watch `:messages` for telemetry (token usage, progress).
 
 ```vim
 :'<,'>PromptyVisual
 ```
+
 - Highlight code or prose, then run to seed the intent with the selection.
 
 ```vim
 :PromptyRefine tighten voice + add CTA
 ```
+
 - Sends refinements over the active interactive transport.
 
 Use the refine buffer (opened automatically once transport is ready) to jot
@@ -86,13 +93,13 @@ require("prompty").setup({
 })
 ```
 
-| Option              | Description |
-| ------------------- | ----------- |
-| `binary`            | Executable name/path for `prompt-maker-cli`. Warns if not found. |
-| `default_flags`     | Extra flags appended to every run (model, templates, etc.). |
-| `temp_dir`          | Where interactive socket files are created. |
-| `keymaps.*`         | Normal/visual bindings for the exposed commands. |
-| `notifications`     | Toggle `vim.notify` messages for telemetry/errors. |
+| Option          | Description                                                      |
+| --------------- | ---------------------------------------------------------------- |
+| `binary`        | Executable name/path for `prompt-maker-cli`. Warns if not found. |
+| `default_flags` | Extra flags appended to every run (model, templates, etc.).      |
+| `temp_dir`      | Where interactive socket files are created.                      |
+| `keymaps.*`     | Normal/visual bindings for the exposed commands.                 |
+| `notifications` | Toggle `vim.notify` messages for telemetry/errors.               |
 
 Any `generate()` call can still pass `flags`, `context`, `urls`, or
 `smart_context = true` on demand.
@@ -121,6 +128,7 @@ vim.keymap.set("n", "<leader>sp", prompty_from_picker, { desc = "Prompty via Sna
 ```
 
 For file pickers, gather selection paths and pass them as `context`:
+
 ```lua
 snacks.picker.git_files({
   multi = true,
@@ -136,6 +144,7 @@ snacks.picker.git_files({
 ---
 
 ## Enhancements & Workflow Ideas
+
 - **Snapshot buffers:** Write output to a named scratch buffer using
   `:saveas` to keep prompt iterations.
 - **Autocommands:** Trigger `PromptyRefine` on `BufWritePost` for an "explain
@@ -148,6 +157,7 @@ snacks.picker.git_files({
 ---
 
 ## Philosophy of Use
+
 - **Editor-first flow:** Keep intent, context, and refinement in buffers so the
   generated prompt remains auditable.
 - **Iterative refinement:** Treat `:PromptyRefine` as a conversation. Short,
