@@ -25,10 +25,7 @@ local function ensure_dir(path)
 
   local ok, err = pcall(vim.fn.mkdir, path, "p")
   if not ok and options.notifications ~= false then
-    vim.notify(
-      string.format("Prompty: unable to create temp dir %s (%s)", path, err),
-      vim.log.levels.WARN
-    )
+    vim.notify(string.format("Prompty: unable to create temp dir %s (%s)", path, err), vim.log.levels.WARN)
   end
 end
 

@@ -1,5 +1,7 @@
 # prompty.nvim
 
+![Tests](https://github.com/edward-r/prompty.nvim/actions/workflows/test.yml/badge.svg)
+
 Prompty is a NeoVim companion for the `prompt-maker-cli` / `pmc` toolkit. It
 streams JSONL output into Markdown buffers, tracks telemetry, and lets you
 iterate on prompts without leaving the editor.
@@ -103,6 +105,34 @@ require("prompty").setup({
 
 Any `generate()` call can still pass `flags`, `context`, `urls`, or
 `smart_context = true` on demand.
+
+---
+
+## Testing & Quality
+
+Prompty follows the standard Plenary test layout (`tests/` with a dedicated
+`minimal_init.lua`). To run the suite:
+
+1. Clone `plenary.nvim` next to this repo (or set `$PLENARY_DIR` to its path).
+2. Run `make test` (shorthand for the longer `nvim --headless ...` command).
+
+```bash
+make test
+```
+
+You can also invoke Plenary manually:
+```bash
+nvim --headless -u tests/minimal_init.lua \
+  -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
+```
+
+### Linting & Formatting
+
+- `make lint` → Runs LuaCheck across `lua/` and `tests/`.
+- `make format` → Applies StyLua.
+- `make check` → Runs tests, lint, and format checks together.
+
+GitHub Actions mirrors this setup via the `CI` workflow (unit tests + lint job).
 
 ---
 
