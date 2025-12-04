@@ -25,7 +25,7 @@ iterate on prompts without leaving the editor.
     { "<leader>pr", ":PromptyRefine<CR>", mode = "n", desc = "Prompty refine" },
   },
   opts = {
-    binary = "pmc",
+    binary = "prompt-maker-cli",
     default_flags = { "--model", "sonnet" },
   },
 }
@@ -121,6 +121,7 @@ make test
 ```
 
 You can also invoke Plenary manually:
+
 ```bash
 nvim --headless -u tests/minimal_init.lua \
   -c "PlenaryBustedDirectory tests/ { minimal_init = 'tests/minimal_init.lua' }"
