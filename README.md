@@ -16,20 +16,36 @@ iterate on prompts without leaving the editor.
 ### lazy.nvim
 
 ```lua
+-- Option A: let prompty.nvim manage its own default keymaps
 {
   "edward-r/prompty.nvim",
   cmd = { "Prompty", "PromptyVisual", "PromptyRefine" },
+  opts = {
+    binary = "prompt-maker-cli",
+    default_flags = { "--model", "sonnet" },
+    -- keymaps default to <leader>pp / <leader>pP / <leader>pr
+  },
+}
+
+-- Option B: define keymaps via lazy.nvim and disable prompty's copies
+{
+  "edward-r/prompty.nvim",
   keys = {
     { "<leader>pp", ":Prompty<CR>", mode = "n", desc = "Prompty" },
     { "<leader>pP", ":PromptyVisual<CR>", mode = "v", desc = "Prompty visual" },
     { "<leader>pr", ":PromptyRefine<CR>", mode = "n", desc = "Prompty refine" },
   },
   opts = {
-    binary = "prompt-maker-cli",
-    default_flags = { "--model", "sonnet" },
+    keymaps = {
+      prompt = "",
+      prompt_visual = "",
+      refine = "",
+    },
   },
 }
 ```
+
+Lazy's `keys` option already registers mappings, so clearing `opts.keymaps` ensures Prompty's `setup()` won't redefine them.
 
 ### packer.nvim
 
@@ -91,7 +107,7 @@ require("prompty").setup({
     prompt = "<leader>pp",
     prompt_visual = "<leader>pP",
     refine = "<leader>pr",
-  },
+  }, -- set entries to "" to disable Prompty-set keymaps
 })
 ```
 
@@ -100,7 +116,7 @@ require("prompty").setup({
 | `binary`        | Executable name/path for `prompt-maker-cli`. Warns if not found. |
 | `default_flags` | Extra flags appended to every run (model, templates, etc.).      |
 | `temp_dir`      | Where interactive socket files are created.                      |
-| `keymaps.*`     | Normal/visual bindings for the exposed commands.                 |
+| `keymaps.*`     | Normal/visual bindings for the exposed commands (set to "" to skip Prompty-managed maps). |
 | `notifications` | Toggle `vim.notify` messages for telemetry/errors.               |
 
 Any `generate()` call can still pass `flags`, `context`, `urls`, or
