@@ -26,6 +26,10 @@ iterate on prompts without leaving the editor.
     -- keymaps default to <leader>pp / <leader>pP / <leader>pr
   },
 }
+-- These keymaps are created inside `setup()`, so they only exist after the
+-- plugin loads. If you keep `cmd = {...}` lazy-loading, trigger `:Prompty` once
+-- (or use Lazy's `keys` option) so the leader mappings load the plugin the
+-- first time you press them.
 
 -- Option B: define keymaps via lazy.nvim and disable prompty's copies
 {
