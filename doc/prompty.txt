@@ -21,7 +21,7 @@ CONFIGURATION                                   *prompty-configuration*
 
 >lua
 require("prompty").setup({
-  binary = "pmc",
+  binary = "prompt-maker-cli",
   default_flags = { "--model", "gpt-4" },
   keymaps = {
     prompt = "<leader>pp",

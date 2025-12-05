@@ -6,7 +6,7 @@ Prompty is a NeoVim companion for the `prompt-maker-cli` / `pmc` toolkit. It
 streams JSONL output into Markdown buffers, tracks telemetry, and lets you
 iterate on prompts without leaving the editor.
 
-> ⚙️ Requirements: NeoVim 0.9+ with `vim.uv`, and `prompt-maker-cli` available in
+> ⚙️ Requirements: NeoVim 0.10+ with `vim.uv`, and `prompt-maker-cli` available in
 > your `$PATH` (or configured via `setup`).
 
 ---
