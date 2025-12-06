@@ -8,6 +8,10 @@ vim.g.loaded_prompty_plugin = true
 
 local prompty = require("prompty")
 
+if prompty.ensure_setup then
+  prompty.ensure_setup()
+end
+
 vim.api.nvim_create_user_command("Prompty", function(cmd)
   local intent = cmd.args
   if intent == "" then
@@ -32,4 +36,10 @@ vim.api.nvim_create_user_command("PromptyRefine", function(cmd)
 end, {
   nargs = "*",
   desc = "Send refinement instruction to active Prompty session",
+})
+
+vim.api.nvim_create_user_command("PromptyFinish", function()
+  prompty.finish()
+end, {
+  desc = "Send finish command to active Prompty session",
 })

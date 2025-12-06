@@ -10,6 +10,7 @@ local defaults = {
     prompt = "<leader>pp",
     prompt_visual = "<leader>pP",
     refine = "<leader>pr",
+    finish = "<leader>pf",
   },
   temp_dir = vim.fs.joinpath(vim.fn.stdpath("run"), "prompty"),
   interactive_timeout = 15000,

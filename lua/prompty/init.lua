@@ -7,7 +7,9 @@ local ui = require("prompty.ui")
 
 local M = {
   _session = nil,
+  _configured = false,
 }
+
 
 local function summarize_progress(payload)
   local message = (payload and (payload.message or payload.label)) or "working"
@@ -18,6 +20,29 @@ local function summarize_progress(payload)
     end
   end
   return message
+end
+
+local function pack_args(...)
+  return { n = select("#", ...), ... }
+end
+
+local function unpack_args(args, index)
+  local i = index or 1
+  if i > args.n then
+    return
+  end
+  return args[i], unpack_args(args, i + 1)
+end
+
+local function run_safe(fn, ...)
+  if not vim.in_fast_event() then
+    fn(...)
+    return
+  end
+  local args = pack_args(...)
+  vim.schedule(function()
+    fn(unpack_args(args))
+  end)
 end
 
 local function first_string(...)
@@ -74,17 +99,18 @@ local function extract_prompt_text(event, event_type)
   )
 end
 
-local function append_prompt(session, text, opts)
+local function render_prompt(session, text)
   if not text or text == "" then
     return
   end
 
   local trimmed = vim.trim(text)
-  if opts and opts.skip_if_same and session and session._last_output == trimmed then
+  if session and session._last_output == trimmed then
     return
   end
 
-  ui.append_markdown(text)
+  local intent = session and session._intent or nil
+  ui.render_prompt(intent, text)
   if session then
     session._last_output = trimmed
   end
@@ -102,9 +128,9 @@ local function handle_event(session, event)
 
   local payload = event.payload or event.data or event or {}
   if event_type == "generation.iteration.complete" then
-    append_prompt(session, extract_prompt_text(event, event_type))
+    render_prompt(session, extract_prompt_text(event, event_type))
   elseif event_type == "generation.final" then
-    append_prompt(session, extract_prompt_text(event, event_type), { skip_if_same = true })
+    render_prompt(session, extract_prompt_text(event, event_type))
     ui.clear_progress()
   elseif event_type == "progress.update" then
     ui.show_progress(summarize_progress(payload))
@@ -121,6 +147,8 @@ local function attach_session(session, intent)
   local buf = ui.reset_output(intent)
   ui.attach_session_cleanup(buf, session)
   session._refine_ready = false
+  session._intent = intent or ""
+  session._last_output = nil
   M._session = session
 end
 
@@ -149,6 +177,7 @@ end
 
 function M.setup(opts)
   local cfg = config.setup(opts)
+  M._configured = true
   if cfg.keymaps then
     if cfg.keymaps.prompt and cfg.keymaps.prompt ~= "" then
       vim.keymap.set("n", cfg.keymaps.prompt, function()
@@ -166,31 +195,44 @@ function M.setup(opts)
         vim.cmd("PromptyRefine")
       end, { desc = "Prompty: send refine", silent = true })
     end
+    if cfg.keymaps.finish and cfg.keymaps.finish ~= "" then
+      vim.keymap.set("n", cfg.keymaps.finish, function()
+        vim.cmd("PromptyFinish")
+      end, { desc = "Prompty: finish session", silent = true })
+    end
   end
   return cfg
+end
+
+function M.ensure_setup()
+  if not M._configured then
+    M.setup()
+  end
 end
 
 local function spawn_session(intent, opts)
   local handlers = {
     event = function(session, event)
-      handle_event(session, event)
+      run_safe(handle_event, session, event)
     end,
     stderr = function(_, data)
       if data and data ~= "" then
-        ui.notify(vim.trim(data), vim.log.levels.ERROR)
+        run_safe(ui.notify, vim.trim(data), vim.log.levels.ERROR)
       end
     end,
     exit = function(_, code, signal)
-      if code ~= 0 then
-        ui.notify(string.format("Prompty exited (code %s, signal %s)", code or "?", signal or "?"), vim.log.levels.WARN)
-      else
-        ui.notify("Prompty session finished", vim.log.levels.INFO)
-      end
-      ui.clear_progress()
-      M._session = nil
+      run_safe(function()
+        if code ~= 0 then
+          ui.notify(string.format("Prompty exited (code %s, signal %s)", code or "?", signal or "?"), vim.log.levels.WARN)
+        else
+          ui.notify("Prompty session finished", vim.log.levels.INFO)
+        end
+        ui.clear_progress()
+        M._session = nil
+      end)
     end,
     transport_ready = function()
-      open_refine_if_needed()
+      run_safe(open_refine_if_needed)
     end,
   }
 

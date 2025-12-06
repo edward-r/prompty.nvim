@@ -15,10 +15,19 @@ local function make_session_id()
 end
 
 local function ensure_socket_path(conf, provided, session_id)
+  local function ensure_dir(path)
+    if not path or path == "" then
+      return
+    end
+    pcall(vim.fn.mkdir, path, "p")
+  end
+
   if provided and provided ~= "" then
+    ensure_dir(vim.fs.dirname(provided))
     return provided
   end
   local dir = conf.temp_dir or vim.fs.joinpath(vim.fn.stdpath("run"), "prompty")
+  ensure_dir(dir)
   local path = vim.fs.joinpath(dir, string.format("prompty-%s.sock", session_id or make_session_id()))
   return path
 end
@@ -31,14 +40,20 @@ function Session:_emit(handler_name, ...)
 end
 
 function Session:_cleanup_socket()
-  if self.transport and not self.transport:is_closing() then
-    self.transport:shutdown(function()
-      if not self.transport:is_closing() then
-        self.transport:close()
-      end
-    end)
-  elseif self.transport then
-    self.transport:close()
+  local transport = self.transport
+  if transport then
+    if transport.read_stop then
+      pcall(transport.read_stop, transport)
+    end
+    if not transport:is_closing() then
+      transport:shutdown(function()
+        if not transport:is_closing() then
+          transport:close()
+        end
+      end)
+    else
+      transport:close()
+    end
   end
   self.transport = nil
 
@@ -74,6 +89,17 @@ function Session:_connect_transport(path)
     end
     self.transport = pipe
     self.transport_path = path
+    pipe:read_start(function(read_err, chunk)
+      if read_err then
+        self:_emit("stderr", string.format("Prompty transport read error: %s", read_err))
+        return
+      end
+      if not chunk then
+        pipe:read_stop()
+        return
+      end
+      self:_handle_stdout(chunk)
+    end)
     self:_emit("transport_ready", path)
   end)
 end
@@ -141,14 +167,14 @@ function Session:_process_line(line)
   end
 
   event.type = event.type or event.event
-  if not event.payload then
-    event.payload = event.data or {}
-  elseif not event.data then
-    event.data = event.payload
+
+  local payload = event.payload or event.data
+  if type(payload) ~= "table" then
+    payload = nil
   end
-  if type(event.payload) ~= "table" then
-    event.payload = {}
-  end
+  event.payload = payload or event
+  event.data = event.data or event.payload
+
   if type(event.telemetry) == "table" and event.payload.telemetry == nil then
     event.payload.telemetry = event.telemetry
   end
@@ -171,7 +197,15 @@ local function build_command(conf, opts, session_id)
   end
 
   local interactive = opts.interactive ~= false
-  local cmd = { binary, "--quiet", "--stream", "jsonl" }
+  local cmd = { binary }
+
+  if opts.intent and opts.intent ~= "" then
+    table.insert(cmd, opts.intent)
+  end
+
+  table.insert(cmd, "--quiet")
+  table.insert(cmd, "--stream")
+  table.insert(cmd, "jsonl")
 
   if not interactive then
     table.insert(cmd, "--json")
@@ -219,10 +253,6 @@ local function build_command(conf, opts, session_id)
       end
     end
     cmd = filtered
-  end
-
-  if opts.intent and opts.intent ~= "" then
-    table.insert(cmd, opts.intent)
   end
 
   return cmd, socket_path

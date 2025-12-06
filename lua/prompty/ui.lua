@@ -87,6 +87,19 @@ function M.append_markdown(text)
   append_lines(buf, vim.split(text, "\n", { plain = true }))
 end
 
+function M.render_prompt(intent, text)
+  local buf = M.ensure_output_buffer()
+  local lines = {}
+  if intent and intent ~= "" then
+    table.insert(lines, "# " .. intent)
+    table.insert(lines, "")
+  end
+  if text and text ~= "" then
+    vim.list_extend(lines, vim.split(text, "\n", { plain = true }))
+  end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+end
+
 function M.show_progress(message)
   local buf = M.ensure_output_buffer()
   local line = math.max(vim.api.nvim_buf_line_count(buf) - 1, 0)
@@ -160,6 +173,17 @@ function M.consume_refine_text()
   local text = vim.trim(table.concat(lines, "\n"))
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
   return text
+end
+
+function M.refine_buffer_has_text()
+  local buf = M.ensure_refine_buffer()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  for _, line in ipairs(lines) do
+    if vim.trim(line) ~= "" then
+      return true
+    end
+  end
+  return false
 end
 
 function M.attach_session_cleanup(bufnr, session)
