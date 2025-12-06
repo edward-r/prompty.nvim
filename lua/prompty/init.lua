@@ -732,6 +732,171 @@ function M.prompt_with_flags()
   M.generate(opts)
 end
 
+
+local function default_save_path()
+  return string.format('prompty-%s.md', os.date('%Y%m%d-%H%M%S'))
+end
+
+local function load_history_entries(limit)
+  local conf = config.get()
+  local history_file = conf.history_file
+  if not history_file or history_file == '' then
+    return nil, 'History file path is not configured'
+  end
+  history_file = vim.fn.expand(history_file)
+  if vim.fn.filereadable(history_file) == 0 then
+    return {}, string.format('History file not found at %s', history_file)
+  end
+  local ok, lines_or_err = pcall(vim.fn.readfile, history_file)
+  if not ok then
+    return nil, lines_or_err
+  end
+  local lines = lines_or_err
+  if limit and #lines > limit then
+    lines = { unpack(lines, #lines - limit + 1, #lines) }
+  end
+  local entries = {}
+  for _, line in ipairs(lines) do
+    local trimmed = vim.trim(line)
+    if trimmed ~= '' then
+      local ok_decode, entry = pcall(vim.json.decode, trimmed, {
+        luanil = { object = true, array = true },
+      })
+      if ok_decode and type(entry) == 'table' then
+        table.insert(entries, entry)
+      end
+    end
+  end
+  return entries
+end
+
+local function history_entry_text(entry)
+  if not entry then
+    return nil
+  end
+  local text = first_string(
+    entry.renderedPrompt,
+    entry.rendered_prompt,
+    entry.polishedPrompt,
+    entry.polished_prompt,
+    entry.prompt,
+    entry.content
+  )
+  if text then
+    return text
+  end
+  local result = entry.result
+  if type(result) == 'table' then
+    return first_string(
+      result.renderedPrompt,
+      result.rendered_prompt,
+      result.polishedPrompt,
+      result.polished_prompt,
+      result.prompt,
+      result.content
+    )
+  end
+  return nil
+end
+
+local function format_history_label(entry)
+  local timestamp = entry and entry.timestamp or ''
+  if timestamp ~= '' then
+    timestamp = timestamp:gsub('T', ' '):sub(1, 19)
+  else
+    timestamp = os.date('%Y-%m-%d %H:%M')
+  end
+  local intent = entry and entry.intent or ''
+  if intent == '' then
+    local text = history_entry_text(entry) or ''
+    intent = vim.trim(text):sub(1, 48)
+  end
+  if intent == '' then
+    intent = '[unknown intent]'
+  end
+  return string.format('%s — %s', timestamp, intent)
+end
+
+function M.save_output(opts)
+  opts = opts or {}
+  local path = opts.path
+  if not path or path == '' then
+    path = default_save_path()
+  end
+  path = vim.fn.expand(path)
+  path = vim.fn.fnamemodify(path, ':p')
+  if vim.fn.filereadable(path) == 1 and not opts.force then
+    local choice = vim.fn.confirm(string.format('File %s exists. Overwrite?', path), '&Yes\\n&No', 2)
+    if choice ~= 1 then
+      ui.notify('Prompty save cancelled', vim.log.levels.INFO)
+      return false
+    end
+  end
+
+  local ok, err = ui.write_output_to(path)
+  if not ok then
+    ui.notify(err or 'Failed to save Prompty output', vim.log.levels.ERROR)
+    return false
+  end
+  ui.notify('Prompty output saved to ' .. path, vim.log.levels.INFO)
+  return true
+end
+
+function M.copy_output()
+  local ok, err = ui.copy_output_to_clipboard()
+  if not ok then
+    ui.notify(err or 'Prompty output buffer is empty', vim.log.levels.WARN)
+    return false
+  end
+  ui.notify('Prompty output copied to clipboard', vim.log.levels.INFO)
+  return true
+end
+
+function M.open_output_scratch()
+  local ok, err = ui.open_output_in_scratch()
+  if not ok then
+    ui.notify(err or 'Prompty output buffer is empty', vim.log.levels.WARN)
+    return false
+  end
+  return true
+end
+
+function M.show_history(opts)
+  opts = opts or {}
+  local limit = opts.limit or 50
+  local entries, err = load_history_entries(limit)
+  if not entries then
+    ui.notify('Prompty history error: ' .. err, vim.log.levels.WARN)
+    return
+  end
+  if vim.tbl_isempty(entries) then
+    ui.notify('Prompty history is empty', vim.log.levels.INFO)
+    return
+  end
+  local items = {}
+  for i = #entries, 1, -1 do
+    local entry = entries[i]
+    table.insert(items, { label = format_history_label(entry), entry = entry })
+  end
+  vim.ui.select(items, {
+    prompt = 'Prompty history',
+    format_item = function(item)
+      return item.label
+    end,
+  }, function(choice)
+    if not choice then
+      return
+    end
+    local text = history_entry_text(choice.entry)
+    if not text then
+      ui.notify('Selected history entry has no prompt text', vim.log.levels.WARN)
+      return
+    end
+    local intent = choice.entry.intent or '[history]'
+    ui.render_prompt(intent, text)
+  end)
+end
+
 function M.active_session()
   return M._session
 end

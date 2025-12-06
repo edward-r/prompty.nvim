@@ -100,6 +100,60 @@ function M.render_prompt(intent, text)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 end
 
+local function has_output_content(lines)
+  if not lines then
+    return false
+  end
+  for _, line in ipairs(lines) do
+    if vim.trim(line) ~= "" then
+      return true
+    end
+  end
+  return false
+end
+
+function M.get_output_lines()
+  local buf = M.ensure_output_buffer()
+  return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+end
+
+function M.write_output_to(path)
+  local lines = M.get_output_lines()
+  if not has_output_content(lines) then
+    return false, "Prompty output buffer is empty"
+  end
+  local ok, err = pcall(vim.fn.writefile, lines, path)
+  if not ok then
+    return false, err
+  end
+  return true
+end
+
+function M.copy_output_to_clipboard()
+  local lines = M.get_output_lines()
+  if not has_output_content(lines) then
+    return false, "Prompty output buffer is empty"
+  end
+  local text = table.concat(lines, "\n")
+  pcall(vim.fn.setreg, "+", text)
+  pcall(vim.fn.setreg, '"', text)
+  return true
+end
+
+function M.open_output_in_scratch()
+  local lines = M.get_output_lines()
+  if not has_output_content(lines) then
+    return false, "Prompty output buffer is empty"
+  end
+  vim.cmd("tabnew")
+  local buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
+  vim.api.nvim_buf_set_option(buf, "swapfile", false)
+  vim.api.nvim_buf_set_option(buf, "filetype", "markdown")
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  return true
+end
+
 function M.show_progress(message)
   local buf = M.ensure_output_buffer()
   local line = math.max(vim.api.nvim_buf_line_count(buf) - 1, 0)

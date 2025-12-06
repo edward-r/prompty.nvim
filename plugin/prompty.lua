@@ -57,6 +57,33 @@ end, {
   desc = "Prompt for intent and per-run flags",
 })
 
+vim.api.nvim_create_user_command("PromptySave", function(cmd)
+  local path = cmd.args ~= "" and cmd.args or nil
+  prompty.save_output({ path = path })
+end, {
+  nargs = "?",
+  complete = "file",
+  desc = "Save Prompty output to a file",
+})
+
+vim.api.nvim_create_user_command("PromptyCopy", function()
+  prompty.copy_output()
+end, {
+  desc = "Copy Prompty output to the clipboard",
+})
+
+vim.api.nvim_create_user_command("PromptyScratch", function()
+  prompty.open_output_scratch()
+end, {
+  desc = "Open Prompty output in a scratch tab",
+})
+
+vim.api.nvim_create_user_command("PromptyHistory", function()
+  prompty.show_history()
+end, {
+  desc = "Browse past Prompty runs from history",
+})
+
 vim.api.nvim_create_user_command("PromptyRefine", function(cmd)
   prompty.refine(cmd.args)
 end, {
