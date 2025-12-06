@@ -20,20 +20,82 @@ local function summarize_progress(payload)
   return message
 end
 
-local function handle_event(_, event)
+local function first_string(...)
+  for i = 1, select("#", ...) do
+    local value = select(i, ...)
+    if type(value) == "string" then
+      local trimmed = vim.trim(value)
+      if trimmed ~= "" then
+        return value
+      end
+    end
+  end
+end
+
+local function extract_prompt_text(event)
+  if not event then
+    return nil
+  end
+
+  local payload = event.payload or event.data or {}
+  local result = type(payload.result) == "table" and payload.result or nil
+
+  if event.type == "generation.final" then
+    return first_string(
+      result and result.renderedPrompt,
+      result and result.rendered_prompt,
+      result and result.polishedPrompt,
+      result and result.polished_prompt,
+      result and result.prompt,
+      result and result.content,
+      payload.renderedPrompt,
+      payload.rendered_prompt,
+      payload.prompt,
+      payload.content,
+      payload.text,
+      payload.delta
+    )
+  end
+
+  return first_string(
+    payload.text,
+    payload.delta,
+    payload.content,
+    payload.prompt,
+    payload.renderedPrompt,
+    payload.rendered_prompt,
+    result and result.renderedPrompt,
+    result and result.prompt
+  )
+end
+
+local function append_prompt(session, text, opts)
+  if not text or text == "" then
+    return
+  end
+
+  local trimmed = vim.trim(text)
+  if opts and opts.skip_if_same and session and session._last_output == trimmed then
+    return
+  end
+
+  ui.append_markdown(text)
+  if session then
+    session._last_output = trimmed
+  end
+end
+
+local function handle_event(session, event)
   if not event or not event.type then
     return
   end
 
   local payload = event.payload or event.data or {}
-  if event.type == "generation.iteration.complete" or event.type == "generation.final" then
-    local text = payload.text or payload.delta or payload.content
-    if text and text ~= "" then
-      ui.append_markdown(text)
-    end
-    if event.type == "generation.final" then
-      ui.clear_progress()
-    end
+  if event.type == "generation.iteration.complete" then
+    append_prompt(session, extract_prompt_text(event))
+  elseif event.type == "generation.final" then
+    append_prompt(session, extract_prompt_text(event), { skip_if_same = true })
+    ui.clear_progress()
   elseif event.type == "progress.update" then
     ui.show_progress(summarize_progress(payload))
   elseif event.type == "context.telemetry" then
