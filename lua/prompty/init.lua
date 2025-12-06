@@ -32,15 +32,20 @@ local function first_string(...)
   end
 end
 
-local function extract_prompt_text(event)
+local function extract_prompt_text(event, event_type)
   if not event then
     return nil
   end
 
-  local payload = event.payload or event.data or {}
-  local result = type(payload.result) == "table" and payload.result or nil
+  local payload = event.payload or event.data or event or {}
+  local result = nil
+  if type(payload.result) == "table" then
+    result = payload.result
+  elseif type(event.result) == "table" then
+    result = event.result
+  end
 
-  if event.type == "generation.final" then
+  if event_type == "generation.final" then
     return first_string(
       result and result.renderedPrompt,
       result and result.rendered_prompt,
@@ -86,21 +91,27 @@ local function append_prompt(session, text, opts)
 end
 
 local function handle_event(session, event)
-  if not event or not event.type then
+  if not event then
     return
   end
 
-  local payload = event.payload or event.data or {}
-  if event.type == "generation.iteration.complete" then
-    append_prompt(session, extract_prompt_text(event))
-  elseif event.type == "generation.final" then
-    append_prompt(session, extract_prompt_text(event), { skip_if_same = true })
+  local event_type = event.type or event.event
+  if not event_type then
+    return
+  end
+
+  local payload = event.payload or event.data or event or {}
+  if event_type == "generation.iteration.complete" then
+    append_prompt(session, extract_prompt_text(event, event_type))
+  elseif event_type == "generation.final" then
+    append_prompt(session, extract_prompt_text(event, event_type), { skip_if_same = true })
     ui.clear_progress()
-  elseif event.type == "progress.update" then
+  elseif event_type == "progress.update" then
     ui.show_progress(summarize_progress(payload))
-  elseif event.type == "context.telemetry" then
-    ui.show_telemetry(payload)
-  elseif event.type == "transport.listening" then
+  elseif event_type == "context.telemetry" then
+    local telemetry = payload.telemetry or event.telemetry or payload
+    ui.show_telemetry(telemetry)
+  elseif event_type == "transport.listening" then
     ui.show_progress("Interactive transport ready")
   end
 end

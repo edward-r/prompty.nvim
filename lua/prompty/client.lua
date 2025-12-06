@@ -136,7 +136,24 @@ function Session:_process_line(line)
     return
   end
 
-  if event and event.type == "transport.listening" then
+  if type(event) ~= "table" then
+    return
+  end
+
+  event.type = event.type or event.event
+  if not event.payload then
+    event.payload = event.data or {}
+  elseif not event.data then
+    event.data = event.payload
+  end
+  if type(event.payload) ~= "table" then
+    event.payload = {}
+  end
+  if type(event.telemetry) == "table" and event.payload.telemetry == nil then
+    event.payload.telemetry = event.telemetry
+  end
+
+  if event.type == "transport.listening" then
     local payload = event.payload or {}
     local path = payload.path or self.socket_path
     if path then
