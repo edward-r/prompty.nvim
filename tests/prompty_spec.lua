@@ -38,3 +38,29 @@ describe("prompty", function()
     assert.are.same("beta gamma\ndelta", text)
   end)
 end)
+
+describe("prompty.ui", function()
+  local ui
+
+  before_each(function()
+    vim.cmd("silent! %bwipeout!")
+    ui = require("prompty.ui")
+    ui.reset_output()
+  end)
+
+  it("renders intent header with prompt body", function()
+    ui.render_prompt("Test Intent", "Line one\nLine two")
+    local buf = ui.ensure_output_buffer()
+    local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    assert.are.same({ "# Test Intent", "", "Line one", "Line two" }, lines)
+  end)
+
+  it("detects when refine buffer has text", function()
+    local refine_buf = ui.ensure_refine_buffer()
+    vim.api.nvim_buf_set_lines(refine_buf, 0, -1, false, { "   ", "" })
+    assert.is_false(ui.refine_buffer_has_text())
+
+    vim.api.nvim_buf_set_lines(refine_buf, 0, -1, false, { "make it shorter" })
+    assert.is_true(ui.refine_buffer_has_text())
+  end)
+end)
