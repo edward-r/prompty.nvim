@@ -85,6 +85,10 @@ function Session:_connect_transport(path)
   pipe:connect(path, function(err)
     if err then
       self:_emit("stderr", string.format("Prompty transport error: %s", err))
+      self:_emit("event", {
+        type = "transport.error",
+        payload = { message = err, path = path },
+      })
       return
     end
     self.transport = pipe
@@ -92,13 +96,23 @@ function Session:_connect_transport(path)
     pipe:read_start(function(read_err, chunk)
       if read_err then
         self:_emit("stderr", string.format("Prompty transport read error: %s", read_err))
+        self:_emit("event", {
+          type = "transport.error",
+          payload = { message = read_err, path = path },
+        })
+        pipe:read_stop()
         return
       end
       if not chunk then
         pipe:read_stop()
+        self:_cleanup_socket()
+        self:_emit("event", {
+          type = "transport.client.disconnected",
+          payload = { path = path },
+        })
         return
       end
-      self:_handle_stdout(chunk)
+      -- Ignore data coming from the interactive transport to avoid duplicate events
     end)
     self:_emit("transport_ready", path)
   end)
@@ -180,8 +194,8 @@ function Session:_process_line(line)
   end
 
   if event.type == "transport.listening" then
-    local payload = event.payload or {}
-    local path = payload.path or self.socket_path
+    local listening_payload = event.payload or {}
+    local path = listening_payload.path or self.socket_path
     if path then
       self:_connect_transport(path)
     end

@@ -113,6 +113,16 @@ function M.show_progress(message)
   })
 end
 
+function M.show_status(message, level)
+  if not message or message == "" then
+    return
+  end
+  M.show_progress(message)
+  if level and level >= vim.log.levels.WARN then
+    M.notify(message, level)
+  end
+end
+
 function M.clear_progress()
   if not state.progress_mark then
     return
@@ -192,6 +202,9 @@ function M.attach_session_cleanup(bufnr, session)
     buffer = bufnr,
     group = group,
     callback = function()
+      if session._cancel_auto_finish then
+        pcall(session._cancel_auto_finish)
+      end
       if session.stop then
         session:stop()
       end

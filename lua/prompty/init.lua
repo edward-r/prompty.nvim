@@ -1,5 +1,6 @@
 ---@diagnostic disable-next-line: undefined-global
 local vim = vim
+local uv = vim.uv
 
 local config = require("prompty.config")
 local client = require("prompty.client")
@@ -9,6 +10,125 @@ local M = {
   _session = nil,
   _configured = false,
 }
+
+local AUTO_FINISH_DELAY = 2000
+
+local SESSION_STATES = {
+  STARTING = "starting",
+  RUNNING = "running",
+  AWAITING_REFINE = "awaiting_refine",
+  FINISHING = "finishing",
+  FINISHED = "finished",
+  ERRORED = "errored",
+}
+
+local run_safe
+
+local function set_session_state(session, state, opts)
+  if not session then
+    return
+  end
+  session._state = state
+  if opts and opts.message then
+    ui.show_status(opts.message, opts.level)
+  end
+end
+
+local function cancel_auto_finish(session)
+  if not session then
+    return
+  end
+  local timer = session._auto_finish_timer
+  if timer then
+    session._auto_finish_timer = nil
+    pcall(function()
+      timer:stop()
+      timer:close()
+    end)
+  end
+end
+
+local function request_finish(session, opts)
+  if not session then
+    return false, "no active session"
+  end
+  cancel_auto_finish(session)
+  if session._state == SESSION_STATES.FINISHING or session._state == SESSION_STATES.FINISHED then
+    return true
+  end
+  if not session:is_transport_ready() then
+    local message = "Interactive transport is not ready; unable to finish session"
+    if not (opts and opts.silent) then
+      ui.notify(message, vim.log.levels.WARN)
+    end
+    return false, message
+  end
+  local ok, err = session:finish()
+  if not ok then
+    if not (opts and opts.silent) then
+      ui.notify("Unable to finish session: " .. (err or "unknown error"), vim.log.levels.ERROR)
+    end
+    return false, err
+  end
+  set_session_state(session, SESSION_STATES.FINISHING, {
+    message = (opts and opts.message) or "Prompty finishing...",
+    level = opts and opts.level,
+  })
+  return true
+end
+
+local function schedule_auto_finish(session)
+  if not session or session._auto_finish_timer then
+    return
+  end
+  if session._has_refined or not session.interactive or not session._has_rendered then
+    return
+  end
+  if not session:is_transport_ready() then
+    return
+  end
+  if ui.refine_buffer_has_text() then
+    return
+  end
+  local timer = uv.new_timer()
+  session._auto_finish_timer = timer
+  timer:start(AUTO_FINISH_DELAY, 0, function()
+    timer:stop()
+    timer:close()
+    session._auto_finish_timer = nil
+    run_safe(function()
+      if session._has_refined or ui.refine_buffer_has_text() then
+        return
+      end
+      if M._session ~= session then
+        return
+      end
+      if session._state == SESSION_STATES.FINISHING or session._state == SESSION_STATES.FINISHED then
+        return
+      end
+      local ok, err = request_finish(session, {
+        message = "Prompty auto-finishing (no refinements)",
+        silent = true,
+      })
+      if not ok and err then
+        ui.notify("Prompty auto-finish failed: " .. err, vim.log.levels.WARN)
+      else
+        session._auto_finished = true
+        ui.notify("Prompty auto-finished (no refinements)", vim.log.levels.INFO)
+      end
+    end)
+  end)
+end
+
+local function stop_current_session()
+  local session = M._session
+  if not session then
+    return
+  end
+  cancel_auto_finish(session)
+  session:stop()
+  M._session = nil
+end
 
 
 local function summarize_progress(payload)
@@ -34,7 +154,7 @@ local function unpack_args(args, index)
   return args[i], unpack_args(args, i + 1)
 end
 
-local function run_safe(fn, ...)
+run_safe = function(fn, ...)
   if not vim.in_fast_event() then
     fn(...)
     return
@@ -113,6 +233,7 @@ local function render_prompt(session, text)
   ui.render_prompt(intent, text)
   if session then
     session._last_output = trimmed
+    session._has_rendered = true
   end
 end
 
@@ -128,17 +249,61 @@ local function handle_event(session, event)
 
   local payload = event.payload or event.data or event or {}
   if event_type == "generation.iteration.complete" then
+    set_session_state(session, SESSION_STATES.RUNNING, { message = "Prompt draft ready" })
     render_prompt(session, extract_prompt_text(event, event_type))
   elseif event_type == "generation.final" then
     render_prompt(session, extract_prompt_text(event, event_type))
     ui.clear_progress()
+    set_session_state(session, SESSION_STATES.RUNNING, { message = "Prompt finalized" })
+    schedule_auto_finish(session)
   elseif event_type == "progress.update" then
     ui.show_progress(summarize_progress(payload))
   elseif event_type == "context.telemetry" then
     local telemetry = payload.telemetry or event.telemetry or payload
     ui.show_telemetry(telemetry)
   elseif event_type == "transport.listening" then
-    ui.show_progress("Interactive transport ready")
+    ui.show_status("Interactive transport ready")
+  elseif event_type == "transport.client.connected" then
+    ui.show_status("Prompty transport connected")
+  elseif event_type == "transport.client.disconnected" then
+    cancel_auto_finish(session)
+    local finishing = session and (session._state == SESSION_STATES.FINISHING or session._auto_finished)
+    if finishing then
+      ui.show_status("Prompty transport disconnected")
+    else
+      set_session_state(session, SESSION_STATES.FINISHED, {
+        message = "Prompty transport disconnected",
+        level = vim.log.levels.WARN,
+      })
+    end
+  elseif event_type == "transport.error" then
+    cancel_auto_finish(session)
+    local message = payload.message or payload.error or "Prompty transport error"
+    set_session_state(session, SESSION_STATES.ERRORED, {
+      message = message,
+      level = vim.log.levels.ERROR,
+    })
+  elseif event_type == "interactive.awaiting" then
+    local mode = payload.mode or payload.state or payload.status
+    if mode == "transport" then
+      set_session_state(session, SESSION_STATES.AWAITING_REFINE, {
+        message = "Awaiting refinement instructions",
+      })
+      schedule_auto_finish(session)
+    elseif mode == "none" then
+      set_session_state(session, SESSION_STATES.RUNNING, {
+        message = "Continuing Prompty session",
+      })
+    end
+  elseif event_type == "interactive.state" then
+    local state_value = payload.state or payload.phase or payload.status or event.state
+    if state_value == "prompt" then
+      set_session_state(session, SESSION_STATES.RUNNING, { message = "Generating prompt" })
+    elseif state_value == "refine" then
+      set_session_state(session, SESSION_STATES.RUNNING, { message = "Applying refinement" })
+    elseif state_value == "complete" then
+      set_session_state(session, SESSION_STATES.FINISHING, { message = "Finalizing Prompty session" })
+    end
   end
 end
 
@@ -149,6 +314,14 @@ local function attach_session(session, intent)
   session._refine_ready = false
   session._intent = intent or ""
   session._last_output = nil
+  session._has_refined = false
+  session._auto_finished = false
+  session._auto_finish_timer = nil
+  session._has_rendered = false
+  session._cancel_auto_finish = function()
+    cancel_auto_finish(session)
+  end
+  set_session_state(session, SESSION_STATES.STARTING, { message = "Starting Prompty session" })
   M._session = session
 end
 
@@ -159,7 +332,11 @@ local function open_refine_if_needed()
   end
   session._refine_ready = true
   ui.open_refine_window()
-  ui.notify("Prompty transport ready. Type refinements and run :PromptyRefine", vim.log.levels.INFO)
+  ui.show_status("Prompty transport ready")
+  ui.notify(
+    "Prompty transport ready. Type instructions then :PromptyRefine or :PromptyFinish",
+    vim.log.levels.INFO
+  )
 end
 
 local function default_generate_opts(opts)
@@ -217,22 +394,37 @@ local function spawn_session(intent, opts)
     end,
     stderr = function(_, data)
       if data and data ~= "" then
-        run_safe(ui.notify, vim.trim(data), vim.log.levels.ERROR)
+        run_safe(function()
+          ui.notify(vim.trim(data), vim.log.levels.ERROR)
+        end)
       end
     end,
-    exit = function(_, code, signal)
+    exit = function(session, code, signal)
       run_safe(function()
+        cancel_auto_finish(session)
+        if M._session ~= session then
+          return
+        end
         if code ~= 0 then
-          ui.notify(string.format("Prompty exited (code %s, signal %s)", code or "?", signal or "?"), vim.log.levels.WARN)
+          local message = string.format("Prompty exited (code %s, signal %s)", code or "?", signal or "?")
+          set_session_state(session, SESSION_STATES.ERRORED, {
+            message = message,
+            level = vim.log.levels.WARN,
+          })
         else
           ui.notify("Prompty session finished", vim.log.levels.INFO)
+          set_session_state(session, SESSION_STATES.FINISHED, { message = "Prompty session finished" })
         end
         ui.clear_progress()
         M._session = nil
       end)
     end,
-    transport_ready = function()
-      run_safe(open_refine_if_needed)
+    transport_ready = function(session)
+      run_safe(function()
+        if M._session == session then
+          open_refine_if_needed()
+        end
+      end)
     end,
   }
 
@@ -260,8 +452,7 @@ function M.generate(opts)
   end
 
   if M._session then
-    M._session:stop()
-    M._session = nil
+    stop_current_session()
   end
 
   spawn_session(intent, opts)
@@ -284,12 +475,16 @@ function M.refine(arg)
     return
   end
 
+  cancel_auto_finish(session)
   local ok, err = session:send_refine(text)
   if not ok then
     ui.notify("Unable to send refine: " .. err, vim.log.levels.ERROR)
-  else
-    ui.notify("Sent refinement to prompt-maker-cli", vim.log.levels.INFO)
+    return
   end
+
+  session._has_refined = true
+  set_session_state(session, SESSION_STATES.RUNNING, { message = "Sent refinement" })
+  ui.notify("Sent refinement to prompt-maker-cli", vim.log.levels.INFO)
 end
 
 function M.finish()
@@ -298,9 +493,9 @@ function M.finish()
     ui.notify("No active Prompty session", vim.log.levels.WARN)
     return
   end
-  local ok, err = session:finish()
-  if not ok then
-    ui.notify("Unable to finish session: " .. err, vim.log.levels.ERROR)
+  local ok = request_finish(session, { message = "Finishing Prompty session..." })
+  if ok then
+    ui.notify("Sent finish command to prompt-maker-cli", vim.log.levels.INFO)
   end
 end
 
