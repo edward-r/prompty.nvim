@@ -9,9 +9,49 @@ local state = {
   refine_buf = nil,
   refine_win = nil,
   progress_mark = nil,
+  refine_hint_message = nil,
 }
 
 local progress_ns = vim.api.nvim_create_namespace("prompty-progress")
+local refine_hint_ns = vim.api.nvim_create_namespace("prompty-refine-hint")
+
+local function refine_buffer_has_text()
+  if not state.refine_buf or not vim.api.nvim_buf_is_valid(state.refine_buf) then
+    return false
+  end
+  local lines = vim.api.nvim_buf_get_lines(state.refine_buf, 0, -1, false)
+  for _, line in ipairs(lines) do
+    if vim.trim(line) ~= "" then
+      return true
+    end
+  end
+  return false
+end
+
+local function refresh_refine_hint()
+  if not state.refine_buf or not vim.api.nvim_buf_is_valid(state.refine_buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(state.refine_buf, refine_hint_ns, 0, -1)
+  if not state.refine_hint_message or refine_buffer_has_text() then
+    return
+  end
+  vim.api.nvim_buf_set_extmark(state.refine_buf, refine_hint_ns, 0, 0, {
+    virt_text = { { state.refine_hint_message, "Comment" } },
+    virt_text_pos = "overlay",
+    hl_mode = "combine",
+  })
+end
+
+function M.set_refine_hint(message)
+  state.refine_hint_message = message
+  refresh_refine_hint()
+end
+
+function M.clear_refine_hint()
+  state.refine_hint_message = nil
+  refresh_refine_hint()
+end
 
 local function ensure_command_window(cmd)
   vim.cmd(cmd)
@@ -204,6 +244,15 @@ function M.show_telemetry(payload)
   M.notify(message, vim.log.levels.INFO)
 end
 
+local function attach_refine_autocmds(buf)
+  local group = vim.api.nvim_create_augroup("PromptyRefineHint" .. buf, { clear = true })
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    buffer = buf,
+    group = group,
+    callback = refresh_refine_hint,
+  })
+end
+
 function M.ensure_refine_buffer()
   if state.refine_buf and vim.api.nvim_buf_is_valid(state.refine_buf) then
     return state.refine_buf
@@ -215,6 +264,8 @@ function M.ensure_refine_buffer()
   vim.api.nvim_buf_set_option(buf, "swapfile", false)
   vim.api.nvim_buf_set_name(buf, "Prompty Instructions")
   state.refine_buf = buf
+  attach_refine_autocmds(buf)
+  refresh_refine_hint()
   return buf
 end
 
@@ -228,26 +279,20 @@ function M.open_refine_window()
     state.refine_win = win
   end
   vim.api.nvim_win_set_buf(win, buf)
+  refresh_refine_hint()
   return buf, win
 end
 
 function M.consume_refine_text()
   local buf = M.ensure_refine_buffer()
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  local text = vim.trim(table.concat(lines, "\n"))
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
-  return text
+  refresh_refine_hint()
+  return table.concat(lines, "\n")
 end
 
 function M.refine_buffer_has_text()
-  local buf = M.ensure_refine_buffer()
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-  for _, line in ipairs(lines) do
-    if vim.trim(line) ~= "" then
-      return true
-    end
-  end
-  return false
+  return refine_buffer_has_text()
 end
 
 function M.attach_session_cleanup(bufnr, session)

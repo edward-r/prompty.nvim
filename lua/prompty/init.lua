@@ -23,6 +23,9 @@ local SESSION_STATES = {
   ERRORED = "errored",
 }
 
+local DEFAULT_REFINE_HINT = "Type instructions, then :PromptyRefine or :PromptyFinish"
+local AWAITING_REFINE_HINT = "Awaiting instructions – blank :PromptyRefine continues"
+
 local run_safe
 
 local function set_session_state(session, state, opts)
@@ -238,6 +241,24 @@ local function render_prompt(session, text)
   end
 end
 
+local function open_refine_if_needed()
+  local session = M._session
+  if not session or session._refine_ready then
+    return
+  end
+  session._refine_ready = true
+  ui.open_refine_window()
+  if not (session and session._awaiting_input) then
+    ui.set_refine_hint(DEFAULT_REFINE_HINT)
+  end
+  ui.show_status("Prompty transport ready")
+  ui.notify(
+    "Prompty transport ready. Type instructions then :PromptyRefine or :PromptyFinish",
+    vim.log.levels.INFO
+  )
+end
+
+
 local function handle_event(session, event)
   if not event then
     return
@@ -287,11 +308,16 @@ local function handle_event(session, event)
   elseif event_type == "interactive.awaiting" then
     local mode = payload.mode or payload.state or payload.status
     if mode == "transport" then
+      session._awaiting_input = true
       set_session_state(session, SESSION_STATES.AWAITING_REFINE, {
         message = "Awaiting refinement instructions",
       })
+      open_refine_if_needed()
+      ui.set_refine_hint(AWAITING_REFINE_HINT)
       schedule_auto_finish(session)
     elseif mode == "none" then
+      session._awaiting_input = false
+      ui.set_refine_hint(DEFAULT_REFINE_HINT)
       set_session_state(session, SESSION_STATES.RUNNING, {
         message = "Continuing Prompty session",
       })
@@ -319,25 +345,12 @@ local function attach_session(session, intent)
   session._auto_finished = false
   session._auto_finish_timer = nil
   session._has_rendered = false
+  session._awaiting_input = false
   session._cancel_auto_finish = function()
     cancel_auto_finish(session)
   end
   set_session_state(session, SESSION_STATES.STARTING, { message = "Starting Prompty session" })
   M._session = session
-end
-
-local function open_refine_if_needed()
-  local session = M._session
-  if not session or session._refine_ready then
-    return
-  end
-  session._refine_ready = true
-  ui.open_refine_window()
-  ui.show_status("Prompty transport ready")
-  ui.notify(
-    "Prompty transport ready. Type instructions then :PromptyRefine or :PromptyFinish",
-    vim.log.levels.INFO
-  )
 end
 
 local function ensure_pending_run()
@@ -1017,14 +1030,25 @@ function M.refine(arg)
     return
   end
 
-  local text = arg and vim.trim(arg)
+  local text = arg
+  if text then
+    text = vim.trim(text)
+  end
   if not text or text == "" then
     text = ui.consume_refine_text()
   end
+  text = text or ""
+  local trimmed = vim.trim(text)
 
-  if not text or text == "" then
-    ui.notify("No refinement instruction provided", vim.log.levels.WARN)
-    return
+  if trimmed == "" then
+    if session._awaiting_input then
+      text = "Continue."
+      ui.notify("Continuing without new instructions", vim.log.levels.INFO)
+    else
+      ui.notify("No refinement instruction provided", vim.log.levels.WARN)
+      ui.set_refine_hint(DEFAULT_REFINE_HINT)
+      return
+    end
   end
 
   cancel_auto_finish(session)
@@ -1035,6 +1059,8 @@ function M.refine(arg)
   end
 
   session._has_refined = true
+  session._awaiting_input = false
+  ui.set_refine_hint(DEFAULT_REFINE_HINT)
   set_session_state(session, SESSION_STATES.RUNNING, { message = "Sent refinement" })
   ui.notify("Sent refinement to prompt-maker-cli", vim.log.levels.INFO)
 end
