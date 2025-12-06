@@ -153,7 +153,12 @@ local function build_command(conf, opts, session_id)
     return nil, string.format("Prompty binary '%s' not found in PATH", binary)
   end
 
-  local cmd = { binary, "--json", "--quiet", "--stream", "jsonl" }
+  local interactive = opts.interactive ~= false
+  local cmd = { binary, "--quiet", "--stream", "jsonl" }
+
+  if not interactive then
+    table.insert(cmd, "--json")
+  end
 
   if type(conf.default_flags) == "table" and #conf.default_flags > 0 then
     vim.list_extend(cmd, conf.default_flags)
@@ -182,13 +187,21 @@ local function build_command(conf, opts, session_id)
   end
 
   local socket_path
-  if opts.interactive ~= false then
+  if interactive then
     socket_path = ensure_socket_path(conf, opts.socket_path, session_id)
     if socket_path then
       pcall(uv.fs_unlink, socket_path)
     end
     table.insert(cmd, "--interactive-transport")
     table.insert(cmd, socket_path)
+
+    local filtered = {}
+    for _, arg in ipairs(cmd) do
+      if arg ~= "--json" then
+        table.insert(filtered, arg)
+      end
+    end
+    cmd = filtered
   end
 
   if opts.intent and opts.intent ~= "" then
