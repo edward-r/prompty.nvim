@@ -9,6 +9,7 @@ local ui = require("prompty.ui")
 local M = {
   _session = nil,
   _configured = false,
+  _pending_run = nil,
 }
 
 local AUTO_FINISH_DELAY = 2000
@@ -339,13 +340,396 @@ local function open_refine_if_needed()
   )
 end
 
+local function ensure_pending_run()
+  if not M._pending_run then
+    M._pending_run = {}
+  end
+  return M._pending_run
+end
+
+local function consume_pending_run()
+  local pending = M._pending_run or {}
+  M._pending_run = nil
+  return pending
+end
+
+local function clear_pending_run()
+  M._pending_run = nil
+end
+
+local function create_temp_file(prefix, contents)
+  local dir = vim.fs.joinpath(vim.fn.stdpath("run"), "prompty")
+  pcall(vim.fn.mkdir, dir, "p")
+  local tmp = vim.fs.joinpath(dir, string.format("%s-%s.txt", prefix or "prompty", uv.hrtime()))
+  local ok, err = pcall(vim.fn.writefile, vim.split(contents or "", "\n", true), tmp)
+  if not ok then
+    ui.notify(string.format("Prompty: failed to create temp context file (%s)", err), vim.log.levels.WARN)
+    return nil
+  end
+  return tmp
+end
+
+local LIST_OPTION_KEYS = {
+  context = true,
+  urls = true,
+  images = true,
+  videos = true,
+}
+
+local function merge_option_list(option_table, key, values)
+  if not values or vim.tbl_isempty(values) then
+    return
+  end
+  option_table[key] = option_table[key] or {}
+  vim.list_extend(option_table[key], vim.deepcopy(values))
+end
+
+local function apply_pending_options(resolved)
+  local pending = M._pending_run
+  if not pending then
+    return
+  end
+  for key, value in pairs(pending) do
+    if LIST_OPTION_KEYS[key] then
+      resolved[key] = nil
+      merge_option_list(resolved, key, value)
+    else
+      resolved[key] = vim.deepcopy(value)
+    end
+  end
+end
+
+local function pending_summary()
+  local pending = M._pending_run
+  if not pending then
+    return "no pending context"
+  end
+  local parts = {}
+  for key, value in pairs(pending) do
+    if LIST_OPTION_KEYS[key] and type(value) == "table" and #value > 0 then
+      table.insert(parts, string.format("%s:%d", key, #value))
+    elseif not LIST_OPTION_KEYS[key] and value ~= nil then
+      if type(value) == "boolean" then
+        table.insert(parts, string.format("%s:%s", key, value and "on" or "off"))
+      elseif value ~= "" then
+        table.insert(parts, string.format("%s:%s", key, value))
+      end
+    end
+  end
+  if #parts == 0 then
+    return "no pending context"
+  end
+  return table.concat(parts, ", ")
+end
+
+local function notify_pending_update(message)
+  ui.notify(string.format("%s (%s)", message, pending_summary()), vim.log.levels.INFO)
+end
+
+local function add_pending_list_value(key, value)
+  if not value then
+    return false
+  end
+  local trimmed = vim.trim(value)
+  if trimmed == "" then
+    return false
+  end
+  local pending = ensure_pending_run()
+  pending[key] = pending[key] or {}
+  table.insert(pending[key], trimmed)
+  return true
+end
+
+local function set_pending_option(key, value)
+  local pending = ensure_pending_run()
+  pending[key] = value
+end
+
+local function prompt_text(prompt_message, opts)
+  vim.fn.inputsave()
+  local ok, result = pcall(vim.fn.input, prompt_message, opts and opts.default or "")
+  vim.fn.inputrestore()
+  if not ok then
+    return nil
+  end
+  result = vim.trim(result or "")
+  if result == "" then
+    return nil
+  end
+  return result
+end
+
+local function prompt_list(prompt_message)
+  local text = prompt_text(prompt_message)
+  if not text then
+    return nil
+  end
+  local items = {}
+  for _, chunk in ipairs(vim.split(text, ",", true)) do
+    local trimmed = vim.trim(chunk)
+    if trimmed ~= "" then
+      table.insert(items, trimmed)
+    end
+  end
+  if #items == 0 then
+    return nil
+  end
+  return items
+end
+
+local function confirm_choice(prompt_message, default_yes)
+  local default = default_yes and 1 or 2
+  local choice = vim.fn.confirm(prompt_message, "&Yes\n&No", default)
+  return choice == 1
+end
+
+local function normalize_string(value)
+  if type(value) ~= "string" then
+    return value
+  end
+  local trimmed = vim.trim(value)
+  if trimmed == "" then
+    return nil
+  end
+  return trimmed
+end
+
 local function default_generate_opts(opts)
   local resolved = opts and vim.tbl_extend("force", {}, opts) or {}
   resolved.intent = resolved.intent and vim.trim(resolved.intent) or resolved.intent
   if (not resolved.intent or resolved.intent == "") and resolved.prompt_for_intent then
     resolved.intent = vim.fn.input("Prompty intent: ")
   end
+
+  apply_pending_options(resolved)
+
+  resolved.model = normalize_string(resolved.model)
+  resolved.context_template = normalize_string(resolved.context_template)
+  resolved.smart_context_root = normalize_string(resolved.smart_context_root)
+
+
+  if resolved.use_current_buffer then
+    local buf_path = vim.api.nvim_buf_get_name(0)
+    if buf_path and buf_path ~= "" and vim.fn.filereadable(buf_path) == 1 then
+      resolved.context = resolved.context or {}
+      table.insert(resolved.context, buf_path)
+    end
+    resolved.use_current_buffer = nil
+  end
+
+  if resolved.snippet and resolved.snippet ~= "" then
+    local snippet_path = create_temp_file("intent", resolved.snippet)
+    if snippet_path then
+      resolved.context = resolved.context or {}
+      table.insert(resolved.context, snippet_path)
+    end
+    resolved.snippet = nil
+  end
+
   return resolved
+end
+
+function M.add_current_buffer_context()
+  local buf_path = vim.api.nvim_buf_get_name(0)
+  if not buf_path or buf_path == "" then
+    ui.notify("Prompty: current buffer has no file path", vim.log.levels.WARN)
+    return
+  end
+  if vim.fn.filereadable(buf_path) == 0 then
+    ui.notify("Prompty: save the current buffer before adding it as context", vim.log.levels.WARN)
+    return
+  end
+  if add_pending_list_value("context", buf_path) then
+    notify_pending_update("Added current buffer to Prompty context queue")
+  end
+end
+
+function M.configure_context()
+  local menu = {
+    {
+      id = "context",
+      label = "Add file/glob (--context)",
+      action = function()
+        local path = prompt_text("Context file or glob: ")
+        if not path then
+          return
+        end
+        path = vim.fn.expand(path)
+        if add_pending_list_value("context", path) then
+          notify_pending_update("Added context path")
+        end
+      end,
+    },
+    {
+      id = "url",
+      label = "Add URL (--url)",
+      action = function()
+        local url = prompt_text("Context URL: ")
+        if url and add_pending_list_value("urls", url) then
+          notify_pending_update("Added context URL")
+        end
+      end,
+    },
+    {
+      id = "image",
+      label = "Add image (--image)",
+      action = function()
+        local image = prompt_text("Image path: ")
+        if image then
+          image = vim.fn.expand(image)
+        end
+        if image and add_pending_list_value("images", image) then
+          notify_pending_update("Added image path")
+        end
+      end,
+    },
+    {
+      id = "video",
+      label = "Add video (--video)",
+      action = function()
+        local video = prompt_text("Video path: ")
+        if video then
+          video = vim.fn.expand(video)
+        end
+        if video and add_pending_list_value("videos", video) then
+          notify_pending_update("Added video path")
+        end
+      end,
+    },
+    {
+      id = "buffer",
+      label = "Use current buffer file",
+      action = function()
+        M.add_current_buffer_context()
+      end,
+    },
+    {
+      id = "template",
+      label = "Set context template",
+      action = function()
+        local template = prompt_text("Context template slug: ")
+        if template then
+          set_pending_option("context_template", template)
+          notify_pending_update("Set context template")
+        end
+      end,
+    },
+    {
+      id = "smart",
+      label = "Toggle smart context",
+      action = function()
+        local pending = ensure_pending_run()
+        local enable = confirm_choice("Enable smart context?", pending.smart_context == true)
+        if enable then
+          set_pending_option("smart_context", true)
+          local root = prompt_text(
+            "Smart context root (blank = current dir): ",
+            { default = pending.smart_context_root or "" }
+          )
+          if root then
+            set_pending_option("smart_context_root", root)
+          else
+            set_pending_option("smart_context_root", "")
+          end
+          notify_pending_update("Smart context enabled")
+        else
+          set_pending_option("smart_context", false)
+          set_pending_option("smart_context_root", "")
+          notify_pending_update("Smart context disabled")
+        end
+
+      end,
+    },
+    {
+      id = "summary",
+      label = "Show pending summary",
+      action = function()
+        ui.notify("Prompty pending context: " .. pending_summary(), vim.log.levels.INFO)
+      end,
+    },
+    {
+      id = "clear",
+      label = "Clear pending context",
+      action = function()
+        clear_pending_run()
+        ui.notify("Prompty pending context cleared", vim.log.levels.INFO)
+      end,
+    },
+    { id = "done", label = "Done" },
+  }
+
+  local function loop()
+    vim.ui.select(menu, {
+      prompt = "Prompty context options",
+      format_item = function(item)
+        return item.label
+      end,
+    }, function(choice)
+      if not choice or choice.id == "done" then
+        ui.notify("Prompty pending context: " .. pending_summary(), vim.log.levels.INFO)
+        return
+      end
+      if choice.action then
+        choice.action()
+      end
+      loop()
+    end)
+  end
+
+  loop()
+end
+
+function M.prompt_with_flags()
+  local opts = { prompt_for_intent = true }
+
+  local model = prompt_text("Model (--model): ")
+  if model then
+    opts.model = model
+  end
+
+  local template = prompt_text("Context template (--context-template): ")
+  if template then
+    opts.context_template = template
+  end
+
+  local contexts = prompt_list("Context files/globs (comma separated): ")
+  if contexts then
+    opts.context = contexts
+  end
+
+  local urls = prompt_list("Context URLs (comma separated): ")
+  if urls then
+    opts.urls = urls
+  end
+
+  local images = prompt_list("Image paths (comma separated): ")
+  if images then
+    opts.images = images
+  end
+
+  local videos = prompt_list("Video paths (comma separated): ")
+  if videos then
+    opts.videos = videos
+  end
+
+  if confirm_choice("Enable smart context for this run?", false) then
+    opts.smart_context = true
+    local root = prompt_text("Smart context root (blank = current dir): ")
+    if root then
+      opts.smart_context_root = root
+    end
+  end
+
+  if confirm_choice("Use current buffer as context?", false) then
+    opts.use_current_buffer = true
+  end
+
+  local snippet = prompt_text("Inline context snippet (optional): ")
+  if snippet then
+    opts.snippet = snippet
+  end
+
+  M.generate(opts)
 end
 
 function M.active_session()
@@ -455,7 +839,10 @@ function M.generate(opts)
     stop_current_session()
   end
 
-  spawn_session(intent, opts)
+  local session = spawn_session(intent, opts)
+  if session then
+    consume_pending_run()
+  end
 end
 
 function M.refine(arg)

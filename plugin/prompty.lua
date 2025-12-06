@@ -31,6 +31,32 @@ end, {
   desc = "Run prompt-maker-cli for visual selection",
 })
 
+vim.api.nvim_create_user_command("PromptyVisualIntent", function()
+  local snippet = prompty.capture_visual_intent()
+  prompty.generate({ snippet = snippet, prompt_for_intent = true })
+end, {
+  range = true,
+  desc = "Capture visual selection as context and prompt for intent",
+})
+
+vim.api.nvim_create_user_command("PromptyContext", function()
+  prompty.configure_context()
+end, {
+  desc = "Interactively configure Prompty context for the next run",
+})
+
+vim.api.nvim_create_user_command("PromptyHere", function()
+  prompty.add_current_buffer_context()
+end, {
+  desc = "Queue the current buffer as Prompty context",
+})
+
+vim.api.nvim_create_user_command("PromptyPrompt", function()
+  prompty.prompt_with_flags()
+end, {
+  desc = "Prompt for intent and per-run flags",
+})
+
 vim.api.nvim_create_user_command("PromptyRefine", function(cmd)
   prompty.refine(cmd.args)
 end, {

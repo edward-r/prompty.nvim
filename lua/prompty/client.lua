@@ -247,8 +247,37 @@ local function build_command(conf, opts, session_id)
     end
   end
 
+  if type(opts.images) == "table" then
+    for _, image in ipairs(opts.images) do
+      table.insert(cmd, "--image")
+      table.insert(cmd, image)
+    end
+  end
+
+  if type(opts.videos) == "table" then
+    for _, video in ipairs(opts.videos) do
+      table.insert(cmd, "--video")
+      table.insert(cmd, video)
+    end
+  end
+
+  if opts.context_template and opts.context_template ~= "" then
+    table.insert(cmd, "--context-template")
+    table.insert(cmd, opts.context_template)
+  end
+
+  if opts.model and opts.model ~= "" then
+    table.insert(cmd, "--model")
+    table.insert(cmd, opts.model)
+  end
+
   if opts.smart_context then
     table.insert(cmd, "--smart-context")
+  end
+
+  if opts.smart_context_root and opts.smart_context_root ~= "" then
+    table.insert(cmd, "--smart-context-root")
+    table.insert(cmd, opts.smart_context_root)
   end
 
   local socket_path
