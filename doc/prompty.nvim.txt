@@ -1,0 +1,161 @@
+*prompty.nvim.txt*                                     Last change: 2025 Dec 07
+
+Prompty.nvim is a Neovim front-end for `prompt-maker-cli`. It streams the CLI's
+JSONL events into Markdown buffers, opens an instruction window for
+refinements, and surfaces telemetry/errors inline.
+
+==============================================================================
+INTRODUCTION                                               *prompty.nvim* *prompty*
+
+Requirements ~
+  • Neovim 0.10+ (uses `vim.uv`).
+  • `prompt-maker-cli` (a.k.a. `pmc`) available on your `$PATH`, or configure
+    `binary` via |prompty-config|.
+  • API keys & configuration expected by `prompt-maker-cli` (see its README).
+
+==============================================================================
+INSTALLATION                                              *prompty-install*
+
+Example with lazy.nvim: >lua
+  {
+    "edward-r/prompty.nvim",
+    cmd = { "Prompty", "PromptyVisual", "PromptyRefine" },
+    opts = {
+      binary = "prompt-maker-cli",
+      default_flags = { "--model", "gpt-4o" },
+    },
+  }
+<
+
+packer.nvim: >lua
+  use({
+    "edward-r/prompty.nvim",
+    config = function()
+      require("prompty").setup()
+    end,
+  })
+<
+
+After installing, run `:helptags ALL` so |:help| picks up this document.
+
+==============================================================================
+CONFIGURATION                                             *prompty-config*
+
+>lua
+require("prompty").setup({
+  binary = "prompt-maker-cli",
+  default_flags = { "--model", "gpt-4o" },
+  keymaps = {
+    prompt = "<leader>pp",
+    prompt_visual = "<leader>pP",
+    refine = "<leader>pr",
+    finish = "<leader>pf",
+  },
+  temp_dir = vim.fn.stdpath("run") .. "/prompty",
+  history_file = vim.fn.expand("~/.config/prompt-maker-cli/history.jsonl"),
+  default_context = { "README.md" },
+  default_context_template = "nvim",
+  default_model = "gpt-4o",
+  default_mode = "interactive", -- or "json"
+  log_command_on_error = true,
+  verbose_errors = false,
+})
+<
+
+Option reference ~
+  `binary`                  Path/command for `prompt-maker-cli`.
+  `default_flags`           Extra CLI flags appended to every run.
+  `keymaps.*`               Optional leader mappings Prompty registers in
+                            `setup()`. Set entries to `""` to skip.
+  `temp_dir`                Directory for transport sockets.
+  `history_file`            Location of `history.jsonl` (read by :PromptyHistory).
+  `default_context`         File paths/globs added unless a run overrides them.
+  `default_context_template` Name of the CLI context template to use by default.
+  `default_model`           Model passed to `--model` when not overridden.
+  `default_mode` / `non_interactive`
+                            Set to `"json"` (or `non_interactive = true`) to make
+                            non-interactive runs the default.
+  `log_command_on_error`    When true, Prompty prints the exact CLI command if a
+                            spawn/exit failure occurs.
+  `verbose_errors`          Adds troubleshooting hints to terminal notifications.
+
+==============================================================================
+COMMANDS                                                 *prompty-commands*
+
+:Prompty {intent}        Run or prompt for intent. Respects defaults and
+                         pending context selections.
+:PromptyVisual           Use the current visual selection as the intent.
+:PromptyVisualIntent     Use the selection as context snippet *and* prompt for
+                         a separate intent.
+:PromptyContext          Interactive picker to add `--context`, `--url`,
+                         `--image`, `--video`, smart-context, etc.
+:PromptyHere             Queue the current buffer's file path as context.
+:PromptyPrompt           Wizard that prompts for model, context, images, etc.
+:PromptySave {path}      Save the output buffer to `path` (defaults to
+                         `prompty-<timestamp>.md`).
+:PromptyCopy             Copy the entire output buffer to the system clipboard.
+:PromptyScratch          Open the latest prompt in a scratch tab.
+:PromptyHistory          Read `history.jsonl`, select an entry, and display it.
+:PromptyOnce {intent}    Run a single non-interactive (`--json`) generation.
+:PromptyRefine {text}    Send refinement instructions (falls back to the
+                         refine buffer when {text} is empty).
+:PromptyFinish           Send `{ "type": "finish" }` to the CLI.
+
+==============================================================================
+WORKFLOWS                                                 *prompty-workflows*
+
+One-shot prompt ~
+  1. `:Prompty Write a structured bug report template`
+  2. Inspect the "Prompty Output" window.
+  3. `:PromptySave bug-report.md` if you want a snapshot.
+
+Visual selection + intent ~
+  1. Select code/text.
+  2. `:'<,'>PromptyVisualIntent`
+  3. Describe the goal; Prompty sends the selection as context snippet while the
+     typed description serves as the new intent.
+
+Adding files/URLs ~
+  - `:PromptyHere` to queue the current buffer.
+  - `:PromptyContext` → "Add URL" to include docs/blog posts.
+  - Status messages show which defaults/overrides are active before each run.
+
+Refinement loop ~
+  - Type multi-line instructions in the "Prompty Instructions" buffer.
+  - `:PromptyRefine` (no args) sends the buffer; blank submissions while the CLI
+    is waiting act as "continue".
+  - `:PromptyFinish` when satisfied.
+
+Non-interactive runs ~
+  - `:PromptyOnce Summarize README.md` runs `prompt-maker-cli --json` with no
+    transport. Refinements are disabled, but you still get a full Markdown
+    output buffer.
+
+==============================================================================
+TROUBLESHOOTING                                          *prompty-troubleshooting*
+
+Missing binary ~
+  • Error: `Prompty binary 'foo' not found in PATH`.
+    Fix: install `prompt-maker-cli` or set `binary = "/path/to/pmc"`.
+
+Socket/temp-dir issues ~
+  • Error: `Unable to create Prompty temp dir …`.
+    Fix: ensure `temp_dir` exists and is writable, or choose another location.
+
+CLI exit code ≠ 0 ~
+  • Prompty reports `Prompty exited (code X, signal Y)` and shows the exact
+    command when `log_command_on_error = true`. Re-run the command manually to
+    inspect stderr, or enable `verbose_errors` for extra hints.
+
+Transport disconnects ~
+  • Prompty now notifies you, clears refinement hints, and auto-finishes the
+    session. Start a new run via `:Prompty`.
+
+==============================================================================
+SEE ALSO                                                  *prompty-links*
+
+  • prompt-maker-cli repository & docs.
+  • https://github.com/edward-r/prompty.nvim (issues, feature requests).
+  • |prompty-config|
+
+vim:tw=78:ts=8:ft=help:norl:

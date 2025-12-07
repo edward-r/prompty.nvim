@@ -73,7 +73,23 @@ Then add `require("prompty").setup()` in your `init.lua`.
 
 ---
 
-## Quick Start
+## Quickstart Checklist
+
+1. Install [`prompt-maker-cli`](https://github.com/edward-r/prompt-maker-cli)
+   and ensure it runs successfully from your shell.
+2. Configure any API keys or context templates required by the CLI (see the
+   CLI repo for details).
+3. Install this plugin and run `require("prompty").setup()` (see
+   [Installation](#installation)).
+4. Optional: set default model/template/context via `setup({ default_* = ... })`.
+5. Run `:Prompty` (or keymaps) once to ensure Prompty loads and creates the
+   "Prompty Output" / "Prompty Instructions" windows.
+
+If you can run `:Prompty Hello world` and see streaming Markdown, you're ready.
+
+## Examples
+
+### One-shot prompt
 
 ```vim
 :Prompty Write a structured bug report template
@@ -82,21 +98,56 @@ Then add `require("prompty").setup()` in your `init.lua`.
 - Streams Markdown into the "Prompty Output" buffer.
 - Watch `:messages` for telemetry (token usage, progress).
 
+### Visual selection + fresh intent
+
 ```vim
-:'<,'>PromptyVisual
+:'<,'>PromptyVisualIntent
 ```
 
-- Highlight code or prose, then run to seed the intent with the selection.
+- Highlight code or prose; Prompty captures it as a snippet and then prompts you
+  for the desired intent text.
+
+### Add files / URLs / buffers as context
+
+```vim
+:PromptyHere          " queue current buffer
+:PromptyContext       " add files, URLs, images, smart context
+```
+
+- The status line before each run shows which defaults/overrides are active.
+
+### Refinement loop
 
 ```vim
 :PromptyRefine tighten voice + add CTA
 ```
 
-- Sends refinements over the active interactive transport.
+- Sends a refinement immediately. Omit `{text}` to send whatever is in the
+  "Prompty Instructions" buffer (multi-line supported). Blank refinements while
+  the CLI is awaiting input act as "continue".
+- Finish the session with `:PromptyFinish` (transport closes and output is
+  preserved for reference).
 
-Use the refine buffer (opened automatically once transport is ready) to jot
-instructions, then run `:PromptyRefine` without arguments—its contents will be
-sent as JSON `{ "type": "refine", "instruction": "..." }`.
+### Snapshots & history
+
+```vim
+:PromptySave bug-report.md
+:PromptyCopy            " copy to clipboard
+:PromptyScratch         " open in scratch tab
+:PromptyHistory         " browse ~/.config/prompt-maker-cli/history.jsonl
+```
+
+- Use these to keep notable iterations, copy prompts into issues/PRs, or reopen
+  older runs without leaving Neovim.
+
+### Non-interactive / JSON-only run
+
+```vim
+:PromptyOnce Summarize README.md
+```
+
+- Runs `prompt-maker-cli --json` with no interactive transport; useful for
+  quick one-shot generations or when you want to copy the final contract only.
 
 ---
 
