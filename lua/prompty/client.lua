@@ -14,20 +14,41 @@ local function make_session_id()
   return string.format("%x", uv.hrtime())
 end
 
+local function format_command(cmd)
+  if type(cmd) ~= "table" or vim.tbl_isempty(cmd) then
+    return nil
+  end
+  local escaped = {}
+  for _, arg in ipairs(cmd) do
+    table.insert(escaped, vim.fn.shellescape(arg))
+  end
+  return table.concat(escaped, " ")
+end
+
 local function ensure_socket_path(conf, provided, session_id)
   local function ensure_dir(path)
     if not path or path == "" then
-      return
+      return true
     end
-    pcall(vim.fn.mkdir, path, "p")
+    local ok, err = pcall(vim.fn.mkdir, path, "p")
+    if not ok then
+      return false, err
+    end
+    return true
   end
 
   if provided and provided ~= "" then
-    ensure_dir(vim.fs.dirname(provided))
+    local ok, err = ensure_dir(vim.fs.dirname(provided))
+    if not ok then
+      return nil, string.format("Unable to create directory for Prompty socket (%s)", err)
+    end
     return provided
   end
   local dir = conf.temp_dir or vim.fs.joinpath(vim.fn.stdpath("run"), "prompty")
-  ensure_dir(dir)
+  local ok, err = ensure_dir(dir)
+  if not ok then
+    return nil, string.format("Unable to create Prompty temp dir %s (%s)", dir, err)
+  end
   local path = vim.fs.joinpath(dir, string.format("prompty-%s.sock", session_id or make_session_id()))
   return path
 end
@@ -282,10 +303,12 @@ local function build_command(conf, opts, session_id)
 
   local socket_path
   if interactive then
-    socket_path = ensure_socket_path(conf, opts.socket_path, session_id)
-    if socket_path then
-      pcall(uv.fs_unlink, socket_path)
+    local ensured_path, socket_err = ensure_socket_path(conf, opts.socket_path, session_id)
+    if not ensured_path then
+      return nil, socket_err
     end
+    socket_path = ensured_path
+    pcall(uv.fs_unlink, socket_path)
     table.insert(cmd, "--interactive-transport")
     table.insert(cmd, socket_path)
 
@@ -298,16 +321,22 @@ local function build_command(conf, opts, session_id)
     cmd = filtered
   end
 
-  return cmd, socket_path
+  local display_command = format_command(cmd)
+
+  return cmd, socket_path, display_command
 end
 
 function M.start(opts)
   opts = opts or {}
   local conf = config.get()
   local session_id = make_session_id()
-  local cmd, socket_path_or_err = build_command(conf, opts, session_id)
+  local cmd, socket_path_or_err, display_command = build_command(conf, opts, session_id)
   if not cmd then
-    return nil, socket_path_or_err or "Prompty: unable to build CLI command"
+    local err = socket_path_or_err or "Prompty: unable to build CLI command"
+    if conf.log_command_on_error ~= false and display_command and display_command ~= "" then
+      err = string.format("%s\nCommand: %s", err, display_command)
+    end
+    return nil, err
   end
   local socket_path = socket_path_or_err
 
@@ -317,6 +346,7 @@ function M.start(opts)
     stdout_buf = "",
     socket_path = socket_path,
     interactive = socket_path ~= nil,
+    command_display = display_command,
   }, Session)
 
   session.proc = vim.system(cmd, {
@@ -346,7 +376,11 @@ function M.start(opts)
   end)
 
   if not session.proc then
-    return nil, "Prompty: failed to spawn CLI"
+    local err = "Prompty: failed to spawn CLI"
+    if conf.log_command_on_error ~= false and display_command and display_command ~= "" then
+      err = string.format("%s\nCommand: %s", err, display_command)
+    end
+    return nil, err
   end
 
   return session

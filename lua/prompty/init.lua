@@ -289,6 +289,10 @@ local function handle_event(session, event)
     ui.show_status("Prompty transport connected")
   elseif event_type == "transport.client.disconnected" then
     cancel_auto_finish(session)
+    if session then
+      session._awaiting_input = false
+    end
+    ui.clear_refine_hint()
     local finishing = session and (session._state == SESSION_STATES.FINISHING or session._auto_finished)
     if finishing then
       ui.show_status("Prompty transport disconnected")
@@ -967,8 +971,18 @@ local function spawn_session(intent, opts)
         if M._session ~= session then
           return
         end
+        session._awaiting_input = false
+        ui.clear_refine_hint()
+        local conf = config.get()
         if code ~= 0 then
           local message = string.format("Prompty exited (code %s, signal %s)", code or "?", signal or "?")
+          if conf.log_command_on_error ~= false and session.command_display then
+            message = string.format("%s\nCommand: %s", message, session.command_display)
+          end
+          if conf.verbose_errors then
+            message = message .. "\nCheck :messages for CLI stderr output."
+          end
+          ui.notify(message, vim.log.levels.WARN)
           set_session_state(session, SESSION_STATES.ERRORED, {
             message = message,
             level = vim.log.levels.WARN,

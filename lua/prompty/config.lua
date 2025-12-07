@@ -15,6 +15,9 @@ local defaults = {
   temp_dir = vim.fs.joinpath(vim.fn.stdpath("run"), "prompty"),
   history_file = vim.fs.normalize(vim.fn.expand("~/.config/prompt-maker-cli/history.jsonl")),
   interactive_timeout = 15000,
+
+  log_command_on_error = true,
+  verbose_errors = false,
   notifications = true,
 }
 
