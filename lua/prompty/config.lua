@@ -16,6 +16,12 @@ local defaults = {
   history_file = vim.fs.normalize(vim.fn.expand("~/.config/prompt-maker-cli/history.jsonl")),
   interactive_timeout = 15000,
 
+  default_context = nil,
+  default_context_template = nil,
+  default_model = nil,
+  default_mode = "interactive", -- "interactive" | "json"
+  non_interactive = false,
+
   log_command_on_error = true,
   verbose_errors = false,
   notifications = true,

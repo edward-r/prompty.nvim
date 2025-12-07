@@ -511,6 +511,32 @@ local function normalize_string(value)
   return trimmed
 end
 
+local function wrap_context_value(value)
+  if not value then
+    return nil
+  end
+  if type(value) == "string" then
+    return { value }
+  elseif type(value) == "table" then
+    return vim.deepcopy(value)
+  end
+  return nil
+end
+
+local function describe_option(label, value, default_value)
+  if not value or value == "" then
+    return nil
+  end
+  if default_value and default_value ~= "" then
+    if value == default_value then
+      return string.format("%s: %s (default)", label, value)
+    else
+      return string.format("%s: %s (override)", label, value)
+    end
+  end
+  return string.format("%s: %s", label, value)
+end
+
 local function default_generate_opts(opts)
   local resolved = opts and vim.tbl_extend("force", {}, opts) or {}
   resolved.intent = resolved.intent and vim.trim(resolved.intent) or resolved.intent
@@ -519,6 +545,17 @@ local function default_generate_opts(opts)
   end
 
   apply_pending_options(resolved)
+
+  local conf = config.get()
+  if not resolved.context then
+    resolved.context = wrap_context_value(conf.default_context)
+  end
+  if not resolved.context_template and conf.default_context_template then
+    resolved.context_template = conf.default_context_template
+  end
+  if not resolved.model and conf.default_model then
+    resolved.model = conf.default_model
+  end
 
   resolved.model = normalize_string(resolved.model)
   resolved.context_template = normalize_string(resolved.context_template)
@@ -1004,10 +1041,17 @@ local function spawn_session(intent, opts)
     end,
   }
 
-  local session, err = client.start(vim.tbl_extend("force", opts or {}, {
+  local run_opts = vim.tbl_extend("force", opts or {}, {
     intent = intent,
     handlers = handlers,
-  }))
+  })
+  local conf = config.get()
+  if run_opts.interactive == nil then
+    local default_mode = (conf.default_mode or "interactive"):lower()
+    local prefer_json = default_mode == "json" or default_mode == "non_interactive" or conf.non_interactive
+    run_opts.interactive = not prefer_json
+  end
+  local session, err = client.start(run_opts)
 
   if not session then
     ui.notify(err or "Failed to start prompt-maker-cli", vim.log.levels.ERROR)
@@ -1022,9 +1066,57 @@ function M.generate(opts)
   opts = default_generate_opts(opts)
   local intent = opts and opts.intent
 
+  local applied_defaults = {}
+  local conf = config.get()
+  local default_mode = (conf.default_mode or "interactive"):lower()
+  local default_prefers_json = default_mode == "json" or default_mode == "non_interactive" or conf.non_interactive
+
+  local context_template_msg = describe_option("Context template", opts.context_template, conf.default_context_template)
+  if context_template_msg then
+    table.insert(applied_defaults, context_template_msg)
+  end
+
+  local model_msg = describe_option("Model", opts.model, conf.default_model)
+  if model_msg then
+    table.insert(applied_defaults, model_msg)
+  end
+
+  local context_list = wrap_context_value(opts.context)
+  local default_context_list = wrap_context_value(conf.default_context)
+  if context_list and #context_list > 0 then
+    local label
+    if default_context_list and vim.deep_equal(context_list, default_context_list) then
+      local joined_context = table.concat(context_list, ", ")
+      label = string.format("Context: %s (default)", joined_context)
+    elseif default_context_list and #default_context_list > 0 then
+      local suffix = #context_list == 1 and "" or "s"
+      label = string.format("Context override (%d item%s)", #context_list, suffix)
+    else
+      local suffix = #context_list == 1 and "" or "s"
+      label = string.format("Context: %d item%s", #context_list, suffix)
+    end
+    table.insert(applied_defaults, label)
+  end
+
+  if opts.interactive == false then
+    local mode_note
+    if default_prefers_json then
+      mode_note = "Mode: non-interactive (--json) (default)"
+    else
+      mode_note = "Mode: non-interactive (--json) (override)"
+    end
+    table.insert(applied_defaults, mode_note)
+  elseif default_prefers_json and (opts.interactive == nil or opts.interactive) then
+    table.insert(applied_defaults, "Mode: interactive (override)")
+  end
+
   if not intent or intent == "" then
     ui.notify("Prompty: intent text is required", vim.log.levels.WARN)
     return
+  end
+
+  if not vim.tbl_isempty(applied_defaults) then
+    ui.show_status(table.concat(applied_defaults, " | "))
   end
 
   if M._session then

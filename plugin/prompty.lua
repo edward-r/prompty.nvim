@@ -84,6 +84,18 @@ end, {
   desc = "Browse past Prompty runs from history",
 })
 
+vim.api.nvim_create_user_command("PromptyOnce", function(cmd)
+  local raw = cmd.args or ""
+  local intent = vim.trim(raw)
+  if intent == "" then
+    intent = nil
+  end
+  prompty.generate({ intent = intent, interactive = false, prompt_for_intent = intent == nil })
+end, {
+  nargs = "*",
+  desc = "Run Prompty once in non-interactive (--json) mode",
+})
+
 vim.api.nvim_create_user_command("PromptyRefine", function(cmd)
   prompty.refine(cmd.args)
 end, {
